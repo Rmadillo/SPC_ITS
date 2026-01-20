@@ -1,0 +1,719 @@
+---
+title: "SPC & ITS Analysis App"
+format: 
+  dashboard:
+    scrolling: true
+    theme: 
+      - spacelab
+      - www/custom.scss
+logo: images/icon.png
+server: shiny
+---
+
+```{r}
+#| context: setup
+#| include: false
+#| warning: false
+#| message: false
+
+# Load required packages
+library(shiny)
+library(shinyjs)
+library(qicharts2)
+library(readxl)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(nlme)
+library(gtsummary)
+library(gt)
+library(broom)
+library(broom.helpers)
+library(tibble)
+library(DT)
+library(plotly) 
+library(AICcmodavg)
+
+# Ensure shinyjs is enabled
+useShinyjs()
+
+    # nav-buttons:
+    #   - icon: github
+    #     title: "Source Code"
+    #     href: https://www.github.com/
+    #     target: _blank
+```
+
+# {.sidebar}
+
+```{r}
+#| title: "Configuration"
+
+div(id = "form",
+    h4("1. Upload Data"),
+
+    fileInput("file_upload", "Choose CSV or Excel File",
+              accept = c(".csv", ".xlsx")),
+        
+    HTML("<small>Data should be formatted and organized following the guidelines in <a href='[https://doi.org/10.1080/00031305.2017.1375989](https://doi.org/10.1080/00031305.2017.1375989)' target='_blank'>Broman & Woo (2018)</a>.</small>"),
+    
+    hr(),
+    
+    h4("2. Configure Chart"),
+    # Dynamic UI for variable selection
+    uiOutput("variable_selectors"),
+    
+    selectInput("chart_type", "Select SPC Chart Type:",
+                choices = c("Run chart" = "run", 
+                            "I chart" = "i", 
+                            "I' chart" = "ip",
+                            "MR chart" = "mr",
+                            "Xbar chart" = "xbar", 
+                            "S chart" = "s", 
+                            "T chart" = "t",
+                            "P chart" = "p", 
+                            "P' chart" = "pp",
+                            "NP chart" = "np", 
+                            "C chart" = "c", 
+                            "U chart" = "u",
+                            "U' chart" = "up",
+                            "G chart" = "g"),
+                selected = "run"),
+    
+    numericInput("multiplier", "Y-Value Multiplier:", value = 1, min = 1),
+    
+    selectInput("x_period", "Aggregate X-axis by Period:",
+                choices = c("None" = "none", 
+                            "Seconds" = "sec", 
+                            "Minutes" = "min",
+                            "Hours" = "hour", 
+                            "Days" = "day", 
+                            "Weeks" = "week",
+                            "Months" = "month", 
+                            "Quarters" = "quarter", 
+                            "Years" = "year"),
+                selected = "none"),
+    hr(),
+    
+    h4("3. Intervention Settings"),
+    textInput("intervention_rows", HTML("Intervention Row(s):<br><small> (comma-separated)</small>"),
+              placeholder = "e.g., 24, 48"),
+    
+    radioButtons("intervention_type", "Intervention Effect:",
+                 choiceNames = list("None",
+                                 HTML("Freeze Baseline<br><small>(uses 1st intervention)</small>"),
+                                 HTML("Recalculate/ITS<br><small>(uses all interventions)</small>")),
+                 choiceValues = list("none", "freeze", "part"),
+                 selected = "none"),
+    
+    textInput("washout_rows", "Washout/Exclude Row(s):",
+              placeholder = "e.g., 25, 26, 27"),
+    hr(),
+    
+    h4("4. Plot Customization"),
+    
+    numericInput("sigfigs", "Decimals (0-5):",
+              value = 2, min = 0, max = 5),
+    
+    checkboxInput("y_neg_check", "Positive Y-axis only?", value = FALSE),
+    
+    uiOutput("plot_labels_ui")
+)
+
+hr()
+actionButton("run_analysis", "Run Analysis", icon = icon("play"), class = "btn-primary")
+br()
+actionButton("reset_app", "Start Over", icon = icon("sync-alt"), class = "btn-danger")
+hr()
+
+```
+
+<hr>
+
+# Data Preview
+
+```{r}
+DT::dataTableOutput("data_table")
+```
+
+# SPC Analysis
+
+## Row {height="600px"}
+
+### SPC Chart
+
+```{r}
+plotlyOutput("spc_plot", height = "100%") 
+
+```
+
+## Row {height="auto"}
+
+### Downloads
+
+```{r}
+div(style = "display: flex; gap: 10px; align-items: center;",
+    downloadButton("download_plot", "Download SPC Plot (PNG, 600dpi)"),
+    downloadButton("download_data", "Download SPC Results (CSV)")
+)
+
+```
+
+# ITS Analysis
+
+## Row {height="600px"}
+
+### Interrupted Time Series Analysis
+
+```{r}
+plotlyOutput("its_plot", height = "100%")
+
+```
+
+## Row {height="auto"}
+
+### Download ITS Plot
+
+```{r}
+div(style = "display: flex; gap: 10px; align-items: center;",
+    downloadButton("download_its_plot", "Download ITS Plot (PNG, 600dpi)")
+)
+
+```
+
+## Row {height="auto"}
+
+### ITS Model Results
+
+```{r}
+gt_output("its_summary_table")
+
+```
+
+## Row {height="auto"}
+
+### Selected Best Fit Model Summary
+
+```{r}
+verbatimTextOutput("its_model_summary")
+
+```
+
+# About
+
+#### About this Application
+
+This tool provides **Statistical Process Control (SPC)** and **Interrupted Time Series (ITS)** analysis capabilities.
+
+**How to use:**
+
+1. **Upload Data:** Upload a CSV or Excel file. If it's an Excel file, make sure the first sheet in the workbook contains your data for analysis.
+2. **Configure:** Select your Date and Value columns in the sidebar.
+3. **Intervention:** Specify the row numbers where interventions occurred. You can look at the *Data Preview* to see on which row(s) the interventions occur.
+4. **Run:** Click "Run Analysis" to generate analysis results. You can then click on the SPC or ITS links in the top navbar to see those results.
+
+#### Tips for Organizing Your Data {#data-organization}
+
+**Tips for Organizing Your Data for Analysis:**
+
+* **Be consistent**
+* Consistent codes for categorical variables (plain text is fine).
+* Consistent fixed code for any missing values (eg, NA).
+* Consistent variable names.
+* Consistent subject identifiers.
+* Consistent data layout in multiple files.
+* Be careful about extra spaces within cells.
+
+
+* **Choose good names for things**
+* Choose short, unique, and meaningful names.
+* Avoid spaces in variable names, they make programming harder.
+
+
+* **Write dates as YYYY-MM-DD**
+* **No empty cells (unless they are *explicitly* meant to be read as *NA*)**
+* It is common for cells to be left blank when a single value was meant to be repeated multiple times. Please do not do this! It is additional work for the analyst to determine the implicit values for these cells.
+* Do not merge cells.
+
+
+* **Put just one thing in a cell**
+* **Make it a rectangle**
+* Single big rectangle with *rows corresponding to subjects* and *columns corresponding to variables*.
+* The first row should contain variable names.
+* Do not use more than one row for the variable names.
+* If there is no reasonable way to create a single rectangle, you may need additional sheets.
+
+
+* **Create a data dictionary**
+* **No calculations in the raw data file**
+* **Do not use font color or highlighting as data**
+* Create indicator variables instead of using color.
+
+
+* **Make backups**
+* Keep an original version in a secure location!
+
+
+* **Use data validation to avoid errors**
+* **Save a copy in a plain text file (e.g., .csv)**
+
+**Source:** Karl W. Broman & Kara H. Woo. 2018. Data Organization in Spreadsheets. *The American Statistician*, 72(1):2-10. DOI: <a href="https://doi.org/10.1080/00031305.2017.1375989"  target="_blank">10.1080/00031305.2017.1375989</a>.
+
+#### Contact
+
+**Contact:** [Dwight Barry, PhD](mailto:dwight.barry@seattlechildrens.org?Subject=SPC/ITS App)
+
+
+
+Clinical Analytics & Center for Quality and Patient Safety
+
+
+
+Seattle Children's Hospital
+
+Version: 0.9. *This app was published on January 20, 2026.*
+
+```{r}
+#| context: server
+
+#-- Reactive Value for Storing Data and Plots --#
+rv <- reactiveValues(
+    data = NULL,
+    spc_plot = NULL,      # Stores ggplot object for downloading
+    spc_plot_ly = NULL,   # Stores plotly object for rendering
+    spc_plot_data = NULL,
+    its_plot = NULL,      # Stores ggplot object for downloading
+    its_plot_ly = NULL,   # Stores plotly object for rendering
+    its_model_summary = NULL,
+    its_summary_table = NULL
+)
+
+#-- Link Logic: Switch Tab and Scroll --#
+observeEvent(input$link_broman, {
+    runjs("
+      var navLinks = document.querySelectorAll('.navbar-nav a');
+      for (var i = 0; i < navLinks.length; i++) {
+        if (navLinks[i].textContent.trim() === 'About') {
+          navLinks[i].click();
+          setTimeout(function() {
+             var section = document.getElementById('data-organization');
+             if(section) section.scrollIntoView({behavior: 'smooth'});
+          }, 300); 
+          break;
+        }
+      }
+    ")
+})
+
+#-- 1. Data Loading --#
+observeEvent(input$file_upload, {
+    req(input$file_upload)
+    file_path <- input$file_upload$datapath
+    
+    if (endsWith(file_path, ".csv")) {
+        df <- read.csv(file_path, stringsAsFactors = FALSE)
+    } else if (endsWith(file_path, ".xlsx")) {
+        df <- readxl::read_excel(file_path)
+    } else {
+        showNotification("Unsupported file type.", type = "error")
+        return(NULL)
+    }
+    
+    rv$data <- df
+    # Reset results on new upload
+    rv$spc_plot <- NULL
+    rv$spc_plot_ly <- NULL
+    rv$spc_plot_data <- NULL
+    rv$its_plot <- NULL
+    rv$its_plot_ly <- NULL
+    rv$its_model_summary <- NULL
+    rv$its_summary_table <- NULL
+})
+
+#-- 2. Dynamic UI Generation --#
+output$variable_selectors <- renderUI({
+    req(rv$data)
+    col_names <- names(rv$data)
+    # Attempt to guess date column
+    date_col_guess <- col_names[sapply(rv$data, function(col) inherits(col, c("Date", "POSIXt")))]
+    if(length(date_col_guess) == 0) {
+        date_col_guess <- grep("date", col_names, ignore.case = TRUE, value = TRUE)[1]
+    }
+    
+    tagList(
+        selectInput("date_var", "Date (X) Variable:", choices = col_names, selected = date_col_guess),
+        selectInput("y_var", "Value (Y) Variable:", choices = col_names[sapply(rv$data, is.numeric)], selected = col_names[sapply(rv$data, is.numeric)][1]),
+        selectInput("n_var", "Subgroup Size (n) (Optional):", choices = c("None", col_names[sapply(rv$data, is.numeric)]))
+    )
+})
+
+output$plot_labels_ui <- renderUI({
+    req(input$y_var, input$date_var)
+    tagList(
+        textInput("xlab_text", "X-axis Label:", value = input$date_var),
+        textInput("ylab_text", "Y-axis Label:", value = input$y_var),
+        textInput("title_text", "Plot Title:", value = paste("Analysis of", input$y_var))
+    )
+})
+
+#-- 3. Data Prep --#
+prepared_data <- reactive({
+    req(rv$data, input$date_var, input$y_var)
+    df <- rv$data
+    
+    df[[input$y_var]] <- as.numeric(df[[input$y_var]])
+    df[[input$date_var]] <- as.Date(df[[input$date_var]])
+    
+    if(any(is.na(df[[input$date_var]]))) {
+        showNotification("Warning: Rows with missing dates removed.", type = "warning")
+    }
+    df %>% 
+        filter(!is.na(.data[[input$date_var]]), !is.na(.data[[input$y_var]])) %>%
+        arrange(.data[[input$date_var]])
+})
+
+#-- 4. Main Analysis Logic --#
+observeEvent(input$run_analysis, {
+    req(prepared_data(), input$y_var, input$date_var)
+    
+    df <- prepared_data()
+    if (nrow(df) == 0) return()
+    
+    # Process Intervention Rows
+    intervention_points <- NULL
+    if (nchar(input$intervention_rows) > 0) {
+        tryCatch({
+            intervention_points <- as.numeric(unlist(strsplit(input$intervention_rows, ",")))
+            intervention_points <- intervention_points[!is.na(intervention_points)]
+        }, error = function(e) showNotification("Invalid intervention rows.", type = "error"))
+    }
+    
+    # Process Washout Rows
+    exclude_arg <- NULL
+    if (nchar(input$washout_rows) > 0) {
+        tryCatch({
+            exclude_arg <- as.numeric(unlist(strsplit(input$washout_rows, ",")))
+            exclude_arg <- exclude_arg[!is.na(exclude_arg)]
+        }, error = function(e) showNotification("Invalid washout rows.", type = "error"))
+    }
+    
+    # === SPC Analysis ===
+    freeze_arg <- if (input$intervention_type == "freeze" && !is.null(intervention_points)) intervention_points[1] else NULL
+    part_arg <- if (input$intervention_type == "part" && !is.null(intervention_points)) intervention_points else NULL
+    
+    charts_using_index <- c('mr', 'g', 't')
+    
+    x_period_arg <- if (!(input$chart_type %in% charts_using_index) &&
+                        !is.null(input$x_period) && input$x_period != "none") {
+        tolower(input$x_period)
+    } else { NULL }
+    
+    y_arg <- df[[input$y_var]]
+    n_arg <- if (!is.null(input$n_var) && input$n_var != "None") df[[input$n_var]] else NULL
+    
+    x_arg <- if (input$chart_type %in% charts_using_index) seq_len(nrow(df)) else df[[input$date_var]]
+
+    spc_result <- tryCatch({
+        qic(x = x_arg, y = y_arg, n = n_arg, 
+            chart = input$chart_type, x.period = x_period_arg,
+            freeze = freeze_arg, part = part_arg, exclude = exclude_arg,
+            multiply = input$multiplier, y.neg = !input$y_neg_check,
+            title = input$title_text, ylab = input$ylab_text, xlab = input$xlab_text,
+            show.grid = TRUE)
+    }, error = function(e) {
+        showNotification(paste("SPC Error:", e$message), type = "error")
+        NULL
+    })
+    
+    if(!is.null(spc_result)) {
+        rv$spc_plot_data <- spc_result$data 
+        spc_data <- spc_result$data
+        
+        # Manually blank out lines/limits for excluded (washout) points
+        if(!is.null(exclude_arg) && length(exclude_arg) > 0) {
+             valid_exclude <- exclude_arg[exclude_arg <= nrow(spc_data)]
+             if(length(valid_exclude) > 0) {
+               spc_data$cl[valid_exclude] <- NA
+               spc_data$ucl[valid_exclude] <- NA
+               spc_data$lcl[valid_exclude] <- NA
+             }
+        }
+
+        # Build hover text & grouping var for breaks
+        spc_data <- spc_data %>%
+            mutate(
+                point_hover = paste0(
+                    input$xlab_text, ": ", x, "<br>",
+                    input$ylab_text, ": ", round(y, input$sigfigs)
+                ),
+                cl_hover = paste0("Centerline: ", round(cl, input$sigfigs)),
+                ucl_hover = paste0("Upper Control Limit: ", round(ucl, input$sigfigs)),
+                lcl_hover = paste0("Lower Control Limit: ", round(lcl, input$sigfigs)),
+                cl_group = cumsum(c(0, abs(diff(coalesce(cl, 0))) > 1e-6))
+            )
+        
+        # Base Plot
+        p <- ggplot(spc_data, aes(x = x))
+        
+        # 1. Intervention Lines (Bottom Layer)
+        if (!is.null(intervention_points) && length(intervention_points) > 0) {
+            p <- p + geom_vline(xintercept = as.numeric(spc_data$x[intervention_points]),
+                                linetype = "dotted", color = "darkgreen")
+        }
+        
+        # 2. Shading (Ribbon)
+        p <- p + geom_ribbon(aes(ymin = lcl, ymax = ucl, group = cl_group), alpha = 0.2, fill = "gray")
+        
+        # 3. Centerline (Visible)
+        p <- p + geom_line(aes(y = cl, group = cl_group), color = "black")
+        
+        # 4. Data Lines and Points
+        p <- p + geom_line(aes(y = y), color = "#5DA5DA") + 
+                 geom_point(aes(y = y, color = sigma.signal)) +
+                 geom_point(data = spc_data[exclude_arg,], aes(y = y), color = "#C8C8C8") +
+                 scale_color_manual(values = c("FALSE" = "#5DA5DA", "TRUE" = "#FAA43A"), guide = "none")
+        
+        # 5. Invisible Layers for Hover Text (alpha=0 makes them invisible but reactive)
+        p <- p + geom_point(aes(y = y, text = point_hover), alpha = 0) +
+                 geom_line(aes(y = cl, text = cl_hover, group = cl_group), alpha = 0) +
+                 geom_line(aes(y = ucl, text = ucl_hover, group = cl_group), alpha = 0) +
+                 geom_line(aes(y = lcl, text = lcl_hover, group = cl_group), alpha = 0)
+        
+        # Labels and Theme
+        p <- p + labs(
+            title = input$title_text,
+            x = input$xlab_text,
+            y = input$ylab_text
+        ) + theme_bw() +
+            theme(legend.position = "none") 
+
+        rv$spc_plot <- p
+        # Use tooltip="text" to ONLY show the custom 'text' aesthetic
+        rv$spc_plot_ly <- ggplotly(p, tooltip = "text")
+    }
+    
+    # === ITS Analysis ===
+    if (!is.null(rv$spc_plot_data) && !is.null(intervention_points) && length(intervention_points) > 0) {
+        df_for_its <- rv$spc_plot_data
+        df_for_its$time <- seq_len(nrow(df_for_its))
+        
+        # Create Level and Trend variables
+        level_vars <- c()
+        trend_vars <- c()
+        for (i in seq_along(intervention_points)) {
+            int_point <- intervention_points[i]
+            level_name <- paste0("level_", i)
+            trend_name <- paste0("trend_", i)
+            
+            df_for_its[[level_name]] <- ifelse(df_for_its$time >= int_point, 1, 0)
+            df_for_its[[trend_name]] <- c(rep(0, int_point - 1), seq_len(nrow(df_for_its) - int_point + 1)) * df_for_its[[level_name]]
+            
+            level_vars <- c(level_vars, level_name)
+            trend_vars <- c(trend_vars, trend_name)
+        }
+        
+        # Exclude washout
+        df_for_its$excluded <- FALSE
+        if(!is.null(exclude_arg) && length(exclude_arg) > 0) df_for_its$excluded[exclude_arg] <- TRUE
+        df_model_its <- df_for_its[!df_for_its$excluded, ]
+        
+        # Build formulas
+        formula_full_str <- paste("y ~ time +", paste(c(level_vars, trend_vars), collapse = " + "))
+        formula_level_only_str <- paste("y ~ time +", paste(level_vars, collapse = " + "))
+        
+        # Fit models
+        model_full <- tryCatch(gls(as.formula(formula_full_str), data = df_model_its, correlation = corARMA(p = 1, q = 0), method = "ML", na.action = na.omit), error = function(e) NULL)
+        model_level_only <- tryCatch(gls(as.formula(formula_level_only_str), data = df_model_its, correlation = corARMA(p = 1, q = 0), method = "ML", na.action = na.omit), error = function(e) NULL)
+        
+        if (!is.null(model_full) && !is.null(model_level_only)) {
+            # Compare AIC
+            if (AIC(model_full) < AIC(model_level_only)) {
+                best_model <- model_full
+                model_name <- "Full Model with Trend"
+            } else {
+                best_model <- model_level_only
+                model_name <- "Level-Change Model"
+            }
+            
+            rv$its_model_summary <- c(
+                paste("Selected Best Fit:", model_name),
+                capture.output(summary(best_model))
+            )
+            
+            # Summary Table (Manual Extraction for gls objects - bypassing broom)
+            rv$its_summary_table <- tryCatch({
+                # Extract coefficients table directly from model summary
+                summ <- summary(best_model)
+                coef_mat <- summ$tTable
+                
+                # Approximate 95% CI (coef +/- 1.96 * SE)
+                est <- coef_mat[, "Value"]
+                se <- coef_mat[, "Std.Error"]
+                lower <- est - (1.96 * se)
+                upper <- est + (1.96 * se)
+                
+                # Create tidy-like data frame manually
+                tidy_model <- data.frame(
+                    term = rownames(coef_mat),
+                    estimate = est,
+                    std.error = se,
+                    statistic = coef_mat[, "t-value"],
+                    p.value = coef_mat[, "p-value"],
+                    conf.low = lower,
+                    conf.high = upper,
+                    stringsAsFactors = FALSE
+                )
+                
+                # Render table with gt
+                tidy_model %>%
+                  mutate(p.value = format.pval(p.value, digits = 2, eps = 0.001)) %>%
+                  select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) %>%
+                  gt() %>%
+                  fmt_number(columns = c(estimate, std.error, statistic, conf.low, conf.high), decimals = 3) %>%
+                  tab_header(title = "ITS Model Results")
+            }, error = function(e) {
+                tibble(Error = paste("Table generation failed:", e$message)) %>% gt()
+            })
+            
+            # Predictions
+            preds_se <- tryCatch({
+                AICcmodavg::predictSE.gls(best_model, newdata = df_for_its, se.fit = TRUE)
+            }, error = function(e) {
+                list(fit = predict(best_model, newdata = df_for_its), se.fit = rep(0, nrow(df_for_its)))
+            })
+            
+            df_for_its$pred <- preds_se$fit
+            df_for_its$se <- preds_se$se.fit
+            df_for_its$lower_ci <- df_for_its$pred - (1.96 * df_for_its$se)
+            df_for_its$upper_ci <- df_for_its$pred + (1.96 * df_for_its$se)
+            
+            # Counterfactual
+            df_counterfactual <- df_for_its
+            for(var in c(level_vars, trend_vars)) if(var %in% names(df_counterfactual)) df_counterfactual[[var]] <- 0
+            df_for_its$counterfactual <- predict(best_model, newdata = df_counterfactual)
+
+            # Clean Washout Data
+            df_for_its$pred[df_for_its$excluded] <- NA
+            df_for_its$lower_ci[df_for_its$excluded] <- NA
+            df_for_its$upper_ci[df_for_its$excluded] <- NA
+            
+            # Segment ID for Ribbons
+            df_for_its$segment_id <- cumsum(c(0, abs(diff(as.integer(df_for_its$excluded)))))
+
+            # Hover Text
+            df_for_its$point_hover <- paste0(
+                input$xlab_text, ": ", df_for_its$x, "<br>",
+                input$ylab_text, ": ", round(df_for_its$y, input$sigfigs)
+            )
+            df_for_its$pred_hover <- paste0("Model Fit: ", round(df_for_its$pred, input$sigfigs))
+            df_for_its$cf_hover <- paste0("Counterfactual: ", round(df_for_its$counterfactual, input$sigfigs))
+            df_for_its$ucl_hover <- paste0("Upper Confidence Limit: ", round(df_for_its$upper_ci, input$sigfigs))
+            df_for_its$lcl_hover <- paste0("Lower Confidence Limit: ", round(df_for_its$lower_ci, input$sigfigs))
+            
+            # Plot
+            its_plot_obj <- ggplot(df_for_its, aes(x = x, y = y)) +
+                geom_vline(xintercept = as.numeric(df_for_its$x[intervention_points]), 
+                           linetype = "dotted", color = "darkgreen") +
+                
+                geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, group = segment_id), 
+                            alpha = 0.2, fill = "#8C8C8C") +
+                
+                geom_line(data = subset(df_for_its, !excluded), color = "#5DA5DA") +
+                
+                geom_point(aes(color = excluded)) +
+                scale_color_manual(values = c("FALSE" = "#5DA5DA", "TRUE" = "#C8C8C8"), guide = "none") +
+                
+                geom_line(aes(y = pred, group = 1), color = "#8C8C8C", linewidth = 1) +
+                geom_line(data = subset(df_for_its, time >= min(intervention_points)), 
+                          aes(y = counterfactual, group = 1), 
+                          color = "blue", linetype = "dashed", linewidth = 1) +
+                
+                # Invisible Layers for Tooltips
+                geom_point(aes(text = point_hover), alpha = 0) +
+                geom_line(aes(y = pred, text = pred_hover, group = 1), alpha = 0) +
+                geom_line(data = subset(df_for_its, time >= min(intervention_points)), 
+                          aes(y = counterfactual, text = cf_hover, group = 1), alpha = 0) +
+                geom_line(aes(y = upper_ci, text = ucl_hover, group = segment_id), alpha = 0) +
+                geom_line(aes(y = lower_ci, text = lcl_hover, group = segment_id), alpha = 0) +
+                
+                labs(title = paste("ITS Analysis for", input$y_var), subtitle = model_name, x = input$xlab_text, y = input$ylab_text) +
+                theme_bw() +
+                theme(legend.position = "none")
+            
+            rv$its_plot <- its_plot_obj
+            rv$its_plot_ly <- ggplotly(its_plot_obj, tooltip = "text")
+            
+        } else {
+            rv$its_model_summary <- "ITS model fitting failed."
+        }
+    } else {
+        rv$its_plot <- NULL
+        rv$its_plot_ly <- NULL
+        rv$its_model_summary <- NULL
+    }
+})
+
+#-- 5. Outputs --#
+output$spc_plot <- renderPlotly({
+    req(rv$spc_plot_ly)
+    rv$spc_plot_ly
+})
+
+output$its_plot <- renderPlotly({
+    req(rv$its_plot_ly)
+    rv$its_plot_ly
+})
+
+output$its_summary_table <- render_gt({
+    req(rv$its_summary_table)
+    rv$its_summary_table
+})
+
+output$its_model_summary <- renderPrint({
+    req(rv$its_model_summary)
+    cat(rv$its_model_summary, sep = "\n")
+})
+
+output$data_table <- DT::renderDataTable({
+    req(prepared_data())
+    DT::datatable(prepared_data(), filter = "top", options = list(pageLength = 10, scrollX = TRUE))
+})
+
+#-- 6. Reset Logic --#
+observeEvent(input$reset_app, {
+    shinyjs::reset("form")
+    rv$data <- NULL
+    rv$spc_plot <- NULL
+    rv$spc_plot_ly <- NULL
+    rv$its_plot <- NULL
+    rv$its_plot_ly <- NULL
+    rv$its_model_summary <- NULL
+    showNotification("App reset.", type = "message")
+})
+
+#-- 7. Downloads --#
+output$download_plot <- downloadHandler(
+    filename = function() { paste0("spc-chart-", Sys.Date(), ".png") },
+    content = function(file) {
+        req(rv$spc_plot)
+        ggsave(file, plot = rv$spc_plot, device = "png", width = 6.5, height = 5, dpi = 600)
+    }
+)
+
+output$download_its_plot <- downloadHandler(
+    filename = function() { paste0("its-plot-", Sys.Date(), ".png") },
+    content = function(file) {
+        req(rv$its_plot)
+        ggsave(file, plot = rv$its_plot, device = "png", width = 6.5, height = 5, dpi = 600)
+    }
+)
+
+output$download_data <- downloadHandler(
+    filename = function() { paste0("spc-data-", Sys.Date(), ".csv") },
+    content = function(file) {
+        req(rv$spc_plot_data)
+        write.csv(rv$spc_plot_data, file, row.names = FALSE)
+    }
+)
+
+```
