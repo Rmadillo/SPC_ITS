@@ -102,7 +102,7 @@ div(id = "form",
     radioButtons("intervention_type", "Intervention Effect:",
                  choiceNames = list("None",
                                  HTML("Freeze Baseline<br><small>(uses 1st intervention)</small>"),
-                                 HTML("Recalculate/ITS<br><small>(uses all interventions)</small>")),
+                                 HTML("Recalculate<br><small>(uses all interventions)</small>")),
                  choiceValues = list("none", "freeze", "part"),
                  selected = "none"),
     
@@ -117,6 +117,9 @@ div(id = "form",
     
     checkboxInput("y_neg_check", "Positive Y-axis only?", value = FALSE),
     
+    # New Goal Line Input
+    numericInput("goal_value", "Goal Line (Y-axis):", value = NULL),
+    
     uiOutput("plot_labels_ui")
 )
 
@@ -128,12 +131,15 @@ hr()
 
 ```
 
+{width=100%}
+
 <hr>
 
 # Data Preview
 
 ```{r}
 DT::dataTableOutput("data_table")
+
 ```
 
 # SPC Analysis
@@ -172,11 +178,12 @@ plotlyOutput("its_plot", height = "100%")
 
 ## Row {height="auto"}
 
-### Download ITS Plot
+### Download ITS Results
 
 ```{r}
 div(style = "display: flex; gap: 10px; align-items: center;",
-    downloadButton("download_its_plot", "Download ITS Plot (PNG, 600dpi)")
+    downloadButton("download_its_plot", "Download ITS Plot (PNG, 600dpi)"),
+    downloadButton("download_its_data", "Download ITS Results (CSV)")
 )
 
 ```
@@ -261,17 +268,13 @@ This tool provides **Statistical Process Control (SPC)** and **Interrupted Time 
 
 #### Contact
 
-**Contact:** [Dwight Barry, PhD](mailto:dwight.barry@seattlechildrens.org?Subject=SPC/ITS App)
-
-
-
 Clinical Analytics & Center for Quality and Patient Safety
 
 
 
 Seattle Children's Hospital
 
-Version: 0.9. *This app was published on January 20, 2026.*
+Version: 0.9. *This app was published on January 23, 2025.*
 
 ```{r}
 #| context: server
@@ -281,9 +284,10 @@ rv <- reactiveValues(
     data = NULL,
     spc_plot = NULL,      # Stores ggplot object for downloading
     spc_plot_ly = NULL,   # Stores plotly object for rendering
-    spc_plot_data = NULL,
+    spc_plot_data = NULL, # Stores data frame with SPC results for downloading
     its_plot = NULL,      # Stores ggplot object for downloading
     its_plot_ly = NULL,   # Stores plotly object for rendering
+    its_data = NULL,      # Stores data frame with predictions for downloading
     its_model_summary = NULL,
     its_summary_table = NULL
 )
@@ -326,6 +330,7 @@ observeEvent(input$file_upload, {
     rv$spc_plot_data <- NULL
     rv$its_plot <- NULL
     rv$its_plot_ly <- NULL
+    rv$its_data <- NULL
     rv$its_model_summary <- NULL
     rv$its_summary_table <- NULL
 })
@@ -455,10 +460,16 @@ observeEvent(input$run_analysis, {
         # Base Plot
         p <- ggplot(spc_data, aes(x = x))
         
+        # 0. Goal Line (First Layer, if exists)
+        if (!is.na(input$goal_value) && !is.null(input$goal_value)) {
+            p <- p + geom_hline(yintercept = input$goal_value, 
+                                linetype = "dotted", color = "darkgreen", linewidth = 0.5)
+        }
+        
         # 1. Intervention Lines (Bottom Layer)
         if (!is.null(intervention_points) && length(intervention_points) > 0) {
             p <- p + geom_vline(xintercept = as.numeric(spc_data$x[intervention_points]),
-                                linetype = "dotted", color = "darkgreen")
+                                linetype = "dotted", color = "darkblue")
         }
         
         # 2. Shading (Ribbon)
@@ -597,6 +608,9 @@ observeEvent(input$run_analysis, {
             df_for_its$lower_ci[df_for_its$excluded] <- NA
             df_for_its$upper_ci[df_for_its$excluded] <- NA
             
+            # Save Data for Download
+            rv$its_data <- df_for_its
+
             # Segment ID for Ribbons
             df_for_its$segment_id <- cumsum(c(0, abs(diff(as.integer(df_for_its$excluded)))))
 
@@ -611,9 +625,18 @@ observeEvent(input$run_analysis, {
             df_for_its$lcl_hover <- paste0("Lower Confidence Limit: ", round(df_for_its$lower_ci, input$sigfigs))
             
             # Plot
-            its_plot_obj <- ggplot(df_for_its, aes(x = x, y = y)) +
+            its_plot_obj <- ggplot(df_for_its, aes(x = x, y = y)) 
+            
+            # 0. Goal Line (First Layer)
+            if (!is.na(input$goal_value) && !is.null(input$goal_value)) {
+                its_plot_obj <- its_plot_obj + 
+                    geom_hline(yintercept = input$goal_value, 
+                               linetype = "dotted", color = "darkgreen", linewidth = 0.5)
+            }
+                
+            its_plot_obj <- its_plot_obj + 
                 geom_vline(xintercept = as.numeric(df_for_its$x[intervention_points]), 
-                           linetype = "dotted", color = "darkgreen") +
+                           linetype = "dotted", color = "darkblue") +
                 
                 geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, group = segment_id), 
                             alpha = 0.2, fill = "#8C8C8C") +
@@ -626,7 +649,7 @@ observeEvent(input$run_analysis, {
                 geom_line(aes(y = pred, group = 1), color = "#8C8C8C", linewidth = 1) +
                 geom_line(data = subset(df_for_its, time >= min(intervention_points)), 
                           aes(y = counterfactual, group = 1), 
-                          color = "blue", linetype = "dashed", linewidth = 1) +
+                          color = "blue", linetype = "dashed", linewidth = 0.8) +
                 
                 # Invisible Layers for Tooltips
                 geom_point(aes(text = point_hover), alpha = 0) +
@@ -687,6 +710,7 @@ observeEvent(input$reset_app, {
     rv$spc_plot_ly <- NULL
     rv$its_plot <- NULL
     rv$its_plot_ly <- NULL
+    rv$its_data <- NULL
     rv$its_model_summary <- NULL
     showNotification("App reset.", type = "message")
 })
@@ -705,6 +729,14 @@ output$download_its_plot <- downloadHandler(
     content = function(file) {
         req(rv$its_plot)
         ggsave(file, plot = rv$its_plot, device = "png", width = 6.5, height = 5, dpi = 600)
+    }
+)
+
+output$download_its_data <- downloadHandler(
+    filename = function() { paste0("its-data-", Sys.Date(), ".csv") },
+    content = function(file) {
+        req(rv$its_data)
+        write.csv(rv$its_data, file, row.names = FALSE)
     }
 )
 
