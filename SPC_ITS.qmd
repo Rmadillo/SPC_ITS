@@ -6,6 +6,11 @@ format:
     theme: 
       - spacelab
       - www/custom.scss
+    nav-buttons:
+      - icon: github
+        title: "Source Code"
+        href: https://github.com/Rmadillo/SPC_ITS
+        target: _blank
 logo: images/icon.png
 server: shiny
 ---
@@ -37,11 +42,6 @@ library(AICcmodavg)
 # Ensure shinyjs is enabled
 useShinyjs()
 
-    # nav-buttons:
-    #   - icon: github
-    #     title: "Source Code"
-    #     href: https://www.github.com/
-    #     target: _blank
 ```
 
 # {.sidebar}
