@@ -38,10 +38,11 @@ library(tibble)
 library(DT)
 library(plotly) 
 library(AICcmodavg)
+library(forecast) 
+library(patchwork)
 
 # Ensure shinyjs is enabled
 useShinyjs()
-
 ```
 
 # {.sidebar}
@@ -128,7 +129,6 @@ actionButton("run_analysis", "Run Analysis", icon = icon("play"), class = "btn-p
 br()
 actionButton("reset_app", "Start Over", icon = icon("sync-alt"), class = "btn-danger")
 hr()
-
 ```
 
 {width=100%}
@@ -140,6 +140,38 @@ hr()
 ```{r}
 DT::dataTableOutput("data_table")
 
+### Conditionally rendered UI for the aggregated table preview
+uiOutput("aggregated_data_ui")
+```
+
+# Time Series Diagnostics
+
+## Row {height="400px"}
+
+### Lag-1 Scatterplot
+
+```{r}
+plotOutput("lag1_plot", height = "100%") 
+```
+
+### Histogram
+
+```{r}
+plotOutput("hist_plot", height = "100%") 
+```
+
+## Row {height="400px"}
+
+### ACF and PACF Plots
+
+```{r}
+plotOutput("acf_pacf_plot", height = "100%") 
+```
+
+### ARIMA Results
+
+```{r}
+htmlOutput("arima_results") 
 ```
 
 # SPC Analysis
@@ -150,7 +182,6 @@ DT::dataTableOutput("data_table")
 
 ```{r}
 plotlyOutput("spc_plot", height = "100%") 
-
 ```
 
 ## Row {height="auto"}
@@ -162,7 +193,6 @@ div(style = "display: flex; gap: 10px; align-items: center;",
     downloadButton("download_plot", "Download SPC Plot (PNG, 600dpi)"),
     downloadButton("download_data", "Download SPC Results (CSV)")
 )
-
 ```
 
 # ITS Analysis
@@ -173,7 +203,6 @@ div(style = "display: flex; gap: 10px; align-items: center;",
 
 ```{r}
 plotlyOutput("its_plot", height = "100%")
-
 ```
 
 ## Row {height="auto"}
@@ -185,7 +214,6 @@ div(style = "display: flex; gap: 10px; align-items: center;",
     downloadButton("download_its_plot", "Download ITS Plot (PNG, 600dpi)"),
     downloadButton("download_its_data", "Download ITS Results (CSV)")
 )
-
 ```
 
 ## Row {height="auto"}
@@ -194,7 +222,14 @@ div(style = "display: flex; gap: 10px; align-items: center;",
 
 ```{r}
 gt_output("its_summary_table")
+```
 
+## Row {height="auto"}
+
+### Methods Summary
+
+```{r}
+htmlOutput("its_methods_text")
 ```
 
 ## Row {height="auto"}
@@ -203,7 +238,6 @@ gt_output("its_summary_table")
 
 ```{r}
 verbatimTextOutput("its_model_summary")
-
 ```
 
 # About
@@ -224,41 +258,41 @@ This tool provides **Statistical Process Control (SPC)** and **Interrupted Time 
 **Tips for Organizing Your Data for Analysis:**
 
 * **Be consistent**
-* Consistent codes for categorical variables (plain text is fine).
-* Consistent fixed code for any missing values (eg, NA).
-* Consistent variable names.
-* Consistent subject identifiers.
-* Consistent data layout in multiple files.
-* Be careful about extra spaces within cells.
+    * Consistent codes for categorical variables (plain text is fine).
+    * Consistent fixed code for any missing values (eg, NA).
+    * Consistent variable names.
+    * Consistent subject identifiers.
+    * Consistent data layout in multiple files.
+    * Be careful about extra spaces within cells.
 
 
 * **Choose good names for things**
-* Choose short, unique, and meaningful names.
-* Avoid spaces in variable names, they make programming harder.
+    * Choose short, unique, and meaningful names.
+    * Avoid spaces in variable names, they make programming harder.
 
 
 * **Write dates as YYYY-MM-DD**
 * **No empty cells (unless they are *explicitly* meant to be read as *NA*)**
-* It is common for cells to be left blank when a single value was meant to be repeated multiple times. Please do not do this! It is additional work for the analyst to determine the implicit values for these cells.
-* Do not merge cells.
+    * It is common for cells to be left blank when a single value was meant to be repeated multiple times. Please do not do this! It is additional work for the analyst to determine the implicit values for these cells.
+    * Do not merge cells.
 
 
 * **Put just one thing in a cell**
 * **Make it a rectangle**
-* Single big rectangle with *rows corresponding to subjects* and *columns corresponding to variables*.
-* The first row should contain variable names.
-* Do not use more than one row for the variable names.
-* If there is no reasonable way to create a single rectangle, you may need additional sheets.
+    * Single big rectangle with *rows corresponding to subjects* and *columns corresponding to variables*.
+    * The first row should contain variable names.
+    * Do not use more than one row for the variable names.
+    * If there is no reasonable way to create a single rectangle, you may need additional sheets.
 
 
 * **Create a data dictionary**
 * **No calculations in the raw data file**
 * **Do not use font color or highlighting as data**
-* Create indicator variables instead of using color.
+    * Create indicator variables instead of using color.
 
 
 * **Make backups**
-* Keep an original version in a secure location!
+    * Keep an original version in a secure location!
 
 
 * **Use data validation to avoid errors**
@@ -268,13 +302,17 @@ This tool provides **Statistical Process Control (SPC)** and **Interrupted Time 
 
 #### Contact
 
+**Contact:** [Dwight Barry, PhD](mailto:dwight.barry@seattlechildrens.org?Subject=SPC/ITS App)
+
+
+
 Clinical Analytics & Center for Quality and Patient Safety
 
 
 
 Seattle Children's Hospital
 
-Version: 0.9. *This app was published on January 23, 2025.*
+Version: 0.9.1 *This app was published on August 7, 2026.*
 
 ```{r}
 #| context: server
@@ -282,14 +320,22 @@ Version: 0.9. *This app was published on January 23, 2025.*
 #-- Reactive Value for Storing Data and Plots --#
 rv <- reactiveValues(
     data = NULL,
-    spc_plot = NULL,      # Stores ggplot object for downloading
-    spc_plot_ly = NULL,   # Stores plotly object for rendering
-    spc_plot_data = NULL, # Stores data frame with SPC results for downloading
-    its_plot = NULL,      # Stores ggplot object for downloading
-    its_plot_ly = NULL,   # Stores plotly object for rendering
-    its_data = NULL,      # Stores data frame with predictions for downloading
+    spc_plot = NULL,      
+    spc_plot_ly = NULL,   
+    spc_plot_data = NULL, 
+    its_plot = NULL,      
+    its_plot_ly = NULL,   
+    its_data = NULL,      
     its_model_summary = NULL,
-    its_summary_table = NULL
+    its_summary_table = NULL,
+    
+    ### Added reactive values to store diagnostic plots and ARIMA results
+    lag1_plot = NULL,
+    hist_plot = NULL,
+    acf_pacf_plot = NULL,
+    arima_results = NULL,
+    arima_p = NULL,
+    arima_q = NULL
 )
 
 #-- Link Logic: Switch Tab and Scroll --#
@@ -312,11 +358,15 @@ observeEvent(input$link_broman, {
 #-- 1. Data Loading --#
 observeEvent(input$file_upload, {
     req(input$file_upload)
+    
+    ### Fixed the logic to check the file 'name' for the extension 
+    ### to circumvent Shiny's temporary datapath naming convention issue.
+    file_name <- input$file_upload$name
     file_path <- input$file_upload$datapath
     
-    if (endsWith(file_path, ".csv")) {
+    if (endsWith(file_name, ".csv")) {
         df <- read.csv(file_path, stringsAsFactors = FALSE)
-    } else if (endsWith(file_path, ".xlsx")) {
+    } else if (endsWith(file_name, ".xlsx")) {
         df <- readxl::read_excel(file_path)
     } else {
         showNotification("Unsupported file type.", type = "error")
@@ -333,6 +383,12 @@ observeEvent(input$file_upload, {
     rv$its_data <- NULL
     rv$its_model_summary <- NULL
     rv$its_summary_table <- NULL
+    
+    ### Clear diagnostic outputs on new file upload
+    rv$lag1_plot <- NULL
+    rv$hist_plot <- NULL
+    rv$acf_pacf_plot <- NULL
+    rv$arima_results <- NULL
 })
 
 #-- 2. Dynamic UI Generation --#
@@ -377,12 +433,53 @@ prepared_data <- reactive({
         arrange(.data[[input$date_var]])
 })
 
+### Reactive block to calculate the aggregated table preview before analysis
+aggregated_data_preview <- reactive({
+    req(prepared_data(), input$y_var, input$date_var, input$x_period, input$chart_type)
+    df <- prepared_data()
+    
+    charts_using_index <- c('mr', 'g', 't')
+    # Return NULL if no aggregation is selected or the chart type ignores it
+    if (input$x_period == "none" || input$chart_type %in% charts_using_index) return(NULL)
+    
+    period <- tolower(input$x_period)
+    x_arg <- df[[input$date_var]]
+    y_arg <- df[[input$y_var]]
+    n_arg <- if (!is.null(input$n_var) && input$n_var != "None") df[[input$n_var]] else NULL
+    
+    # Use qic() safely in the background to ensure the table matches the exact aggregation logic of the chart
+    res <- tryCatch({
+        qic(x = x_arg, y = y_arg, n = n_arg, 
+            chart = input$chart_type, x.period = period,
+            multiply = input$multiplier)
+    }, error = function(e) NULL)
+    
+    if (!is.null(res)) {
+        agg_df <- res$data %>% select(Date = x, Value = y)
+        # Add explicit row numbers to inform the user
+        agg_df <- agg_df %>% mutate(Row = row_number()) %>% select(Row, Date, Value)
+        return(agg_df)
+    }
+    return(NULL)
+})
+
+
 #-- 4. Main Analysis Logic --#
 observeEvent(input$run_analysis, {
     req(prepared_data(), input$y_var, input$date_var)
     
     df <- prepared_data()
     if (nrow(df) == 0) return()
+    
+    # Safety feature: clear old reactive values to prevent stale visual conflicts
+    rv$spc_plot <- NULL
+    rv$spc_plot_ly <- NULL
+    rv$spc_plot_data <- NULL
+    rv$its_plot <- NULL
+    rv$its_plot_ly <- NULL
+    rv$its_data <- NULL
+    rv$its_model_summary <- NULL
+    rv$its_summary_table <- NULL
     
     # Process Intervention Rows
     intervention_points <- NULL
@@ -402,9 +499,77 @@ observeEvent(input$run_analysis, {
         }, error = function(e) showNotification("Invalid washout rows.", type = "error"))
     }
     
+    y_arg <- df[[input$y_var]]
+    n_arg <- if (!is.null(input$n_var) && input$n_var != "None") df[[input$n_var]] else NULL
+    
+    ### --- Time Series Diagnostics Block ---
+    
+    # 1. Lag-1 Scatterplot
+    y_lag1 <- lag(y_arg, 1)
+    autocor_val <- cor(y_arg, y_lag1, use = "complete.obs")
+    
+    df_lag <- data.frame(y = y_arg, y_lag = y_lag1)
+    rv$lag1_plot <- ggplot(df_lag, aes(x = y_lag, y = y)) +
+        geom_point(color = "#5DA5DA", alpha = 0.7) +
+        labs(x = "Lag 1 Value", y = input$ylab_text,
+             title = "Lag-1 Scatterplot",
+             subtitle = paste("Autocorrelation:", round(autocor_val, 3))) +
+        theme_bw()
+    
+    # 2. Histogram
+    rv$hist_plot <- ggplot(df_lag, aes(x = y)) +
+        geom_histogram(fill = "#5DA5DA", color = "black", bins = 30) +
+        labs(x = input$ylab_text, y = "Frequency", title = "Histogram of Y Variable") +
+        theme_bw()
+        
+    # 3. ACF and PACF Subplots
+    acf_data <- acf(y_arg, plot = FALSE)
+    pacf_data <- pacf(y_arg, plot = FALSE)
+    
+    # Convert to dataframes for ggplot compatibility
+    acf_df <- data.frame(lag = acf_data$lag[,1,1], acf = acf_data$acf[,1,1])
+    pacf_df <- data.frame(lag = pacf_data$lag[,1,1], pacf = pacf_data$acf[,1,1])
+    ci_bound <- 1.96 / sqrt(length(y_arg))
+    
+    p_acf <- ggplot(acf_df, aes(x = lag, y = acf)) +
+        geom_segment(aes(xend = lag, yend = 0)) +
+        geom_hline(yintercept = c(-ci_bound, ci_bound), linetype = "dashed", color = "blue") +
+        labs(title = "ACF") + theme_bw()
+        
+    p_pacf <- ggplot(pacf_df, aes(x = lag, y = pacf)) +
+        geom_segment(aes(xend = lag, yend = 0)) +
+        geom_hline(yintercept = c(-ci_bound, ci_bound), linetype = "dashed", color = "blue") +
+        labs(title = "PACF") + theme_bw()
+        
+    rv$acf_pacf_plot <- p_acf + p_pacf # Utilizes patchwork package
+    
+    # 4. Auto ARIMA modeling to get p and q parameters
+    arima_model <- tryCatch(auto.arima(y_arg), error = function(e) NULL)
+    
+    if(!is.null(arima_model) && !is.na(arima_model$arma[1])) {
+        # arima_model$arma vector encodes (p, q, P, Q, m, d, D) 
+        local_p <- arima_model$arma[1]
+        local_q <- arima_model$arma[2]
+        
+        rv$arima_results <- HTML(paste0(
+            "<h4>ARIMA Model</h4>",
+            "<p>Best Fit Selected: ", capture.output(arima_model)[2], "</p>",
+            "<p>AR order (<b>p</b>): <b>", local_p, "</b></p>",
+            "<p>MA order (<b>q</b>): <b>", local_q, "</b></p>"
+        ))
+    } else {
+        local_p <- 1
+        local_q <- 0
+        rv$arima_results <- HTML("<h4>ARIMA Model</h4><p>Could not fit ARIMA model. Using defaults (p=1, q=0).</p>")
+    }
+    
+    # Save parameters to reactive values for text rendering
+    rv$arima_p <- local_p
+    rv$arima_q <- local_q
+    
     # === SPC Analysis ===
-    freeze_arg <- if (input$intervention_type == "freeze" && !is.null(intervention_points)) intervention_points[1] else NULL
-    part_arg <- if (input$intervention_type == "part" && !is.null(intervention_points)) intervention_points else NULL
+    freeze_arg <- if (input$intervention_type == "freeze" && !is.null(intervention_points)) intervention_points[1] - 1 else NULL
+    part_arg <- if (input$intervention_type == "part" && !is.null(intervention_points)) intervention_points - 1 else NULL
     
     charts_using_index <- c('mr', 'g', 't')
     
@@ -412,9 +577,6 @@ observeEvent(input$run_analysis, {
                         !is.null(input$x_period) && input$x_period != "none") {
         tolower(input$x_period)
     } else { NULL }
-    
-    y_arg <- df[[input$y_var]]
-    n_arg <- if (!is.null(input$n_var) && input$n_var != "None") df[[input$n_var]] else NULL
     
     x_arg <- if (input$chart_type %in% charts_using_index) seq_len(nrow(df)) else df[[input$date_var]]
 
@@ -434,7 +596,7 @@ observeEvent(input$run_analysis, {
         rv$spc_plot_data <- spc_result$data 
         spc_data <- spc_result$data
         
-        # Manually blank out lines/limits for excluded (washout) points
+        # Manually blank out lines/limits for excluded (washout) points safely bounded by available data
         if(!is.null(exclude_arg) && length(exclude_arg) > 0) {
              valid_exclude <- exclude_arg[exclude_arg <= nrow(spc_data)]
              if(length(valid_exclude) > 0) {
@@ -468,8 +630,12 @@ observeEvent(input$run_analysis, {
         
         # 1. Intervention Lines (Bottom Layer)
         if (!is.null(intervention_points) && length(intervention_points) > 0) {
-            p <- p + geom_vline(xintercept = as.numeric(spc_data$x[intervention_points]),
-                                linetype = "dotted", color = "darkblue")
+            # Bound protection: Only map intervention lines that still exist post-aggregation to prevent Plotly NA crashes
+            valid_ints <- intervention_points[intervention_points <= nrow(spc_data)]
+            if (length(valid_ints) > 0) {
+                p <- p + geom_vline(xintercept = as.numeric(spc_data$x[valid_ints]),
+                                    linetype = "dotted", color = "darkblue")
+            }
         }
         
         # 2. Shading (Ribbon)
@@ -479,10 +645,17 @@ observeEvent(input$run_analysis, {
         p <- p + geom_line(aes(y = cl, group = cl_group), color = "black")
         
         # 4. Data Lines and Points
+        
+        # Bound protection for exclude markers as well
+        valid_exclude <- exclude_arg[exclude_arg <= nrow(spc_data)]
+        
         p <- p + geom_line(aes(y = y), color = "#5DA5DA") + 
                  geom_point(aes(y = y, color = sigma.signal)) +
-                 geom_point(data = spc_data[exclude_arg,], aes(y = y), color = "#C8C8C8") +
                  scale_color_manual(values = c("FALSE" = "#5DA5DA", "TRUE" = "#FAA43A"), guide = "none")
+                 
+        if(length(valid_exclude) > 0) {
+            p <- p + geom_point(data = spc_data[valid_exclude, ], aes(y = y), color = "#C8C8C8")
+        }
         
         # 5. Invisible Layers for Hover Text (alpha=0 makes them invisible but reactive)
         p <- p + geom_point(aes(y = y, text = point_hover), alpha = 0) +
@@ -508,7 +681,7 @@ observeEvent(input$run_analysis, {
         df_for_its <- rv$spc_plot_data
         df_for_its$time <- seq_len(nrow(df_for_its))
         
-        # Create Level and Trend variables
+        # Create Level and Trend variables safely
         level_vars <- c()
         trend_vars <- c()
         for (i in seq_along(intervention_points)) {
@@ -517,7 +690,9 @@ observeEvent(input$run_analysis, {
             trend_name <- paste0("trend_", i)
             
             df_for_its[[level_name]] <- ifelse(df_for_its$time >= int_point, 1, 0)
-            df_for_its[[trend_name]] <- c(rep(0, int_point - 1), seq_len(nrow(df_for_its) - int_point + 1)) * df_for_its[[level_name]]
+            
+            # Using pmax protects against out-of-bounds seq_len generation if intervention shifts post-aggregation
+            df_for_its[[trend_name]] <- pmax(0, df_for_its$time - int_point + 1) * df_for_its[[level_name]]
             
             level_vars <- c(level_vars, level_name)
             trend_vars <- c(trend_vars, trend_name)
@@ -525,19 +700,41 @@ observeEvent(input$run_analysis, {
         
         # Exclude washout
         df_for_its$excluded <- FALSE
-        if(!is.null(exclude_arg) && length(exclude_arg) > 0) df_for_its$excluded[exclude_arg] <- TRUE
+        if(!is.null(exclude_arg) && length(exclude_arg) > 0) {
+            valid_ex_its <- exclude_arg[exclude_arg <= nrow(df_for_its)]
+            df_for_its$excluded[valid_ex_its] <- TRUE
+        }
         df_model_its <- df_for_its[!df_for_its$excluded, ]
         
         # Build formulas
         formula_full_str <- paste("y ~ time +", paste(c(level_vars, trend_vars), collapse = " + "))
         formula_level_only_str <- paste("y ~ time +", paste(level_vars, collapse = " + "))
         
-        # Fit models
-        model_full <- tryCatch(gls(as.formula(formula_full_str), data = df_model_its, correlation = corARMA(p = 1, q = 0), method = "ML", na.action = na.omit), error = function(e) NULL)
-        model_level_only <- tryCatch(gls(as.formula(formula_level_only_str), data = df_model_its, correlation = corARMA(p = 1, q = 0), method = "ML", na.action = na.omit), error = function(e) NULL)
+        ### Cascading fallback logic. 
+        model_full <- NULL
+        model_level_only <- NULL
         
+        # 1. Attempt with ARMA parameters
+        if (local_p != 0 || local_q != 0) {
+            model_full <- tryCatch(gls(as.formula(formula_full_str), data = df_model_its, correlation = corARMA(p = local_p, q = local_q), method = "ML", na.action = na.omit), error = function(e) NULL)
+            model_level_only <- tryCatch(gls(as.formula(formula_level_only_str), data = df_model_its, correlation = corARMA(p = local_p, q = local_q), method = "ML", na.action = na.omit), error = function(e) NULL)
+        }
+        
+        # 2. Fallback to independent errors (White Noise) if the specified ARMA fails, 
+        # or if auto.arima already determined it was white noise
+        if (is.null(model_full) && is.null(model_level_only)) {
+            model_full <- tryCatch(gls(as.formula(formula_full_str), data = df_model_its, method = "ML", na.action = na.omit), error = function(e) NULL)
+            model_level_only <- tryCatch(gls(as.formula(formula_level_only_str), data = df_model_its, method = "ML", na.action = na.omit), error = function(e) NULL)
+            
+            if (!is.null(model_full) || !is.null(model_level_only)) {
+                # Update reactive values so the methods summary text reflects the fallback
+                rv$arima_p <- 0
+                rv$arima_q <- 0
+            }
+        }
+        
+        # 3. Model Selection: Pick the best fit, or whichever one successfully converged
         if (!is.null(model_full) && !is.null(model_level_only)) {
-            # Compare AIC
             if (AIC(model_full) < AIC(model_level_only)) {
                 best_model <- model_full
                 model_name <- "Full Model with Trend"
@@ -545,7 +742,17 @@ observeEvent(input$run_analysis, {
                 best_model <- model_level_only
                 model_name <- "Level-Change Model"
             }
-            
+        } else if (!is.null(model_full)) {
+            best_model <- model_full
+            model_name <- "Full Model with Trend"
+        } else if (!is.null(model_level_only)) {
+            best_model <- model_level_only
+            model_name <- "Level-Change Model"
+        } else {
+            best_model <- NULL
+        }
+        
+        if (!is.null(best_model)) {
             rv$its_model_summary <- c(
                 paste("Selected Best Fit:", model_name),
                 capture.output(summary(best_model))
@@ -578,19 +785,20 @@ observeEvent(input$run_analysis, {
                 # Render table with gt
                 tidy_model %>%
                   mutate(p.value = format.pval(p.value, digits = 2, eps = 0.001)) %>%
-                  select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) %>%
+                  select(Term = term, Estimate = estimate, LCL = conf.low, UCL = conf.high, SE = std.error, t = statistic, `p-value` = p.value) %>%
                   gt() %>%
-                  fmt_number(columns = c(estimate, std.error, statistic, conf.low, conf.high), decimals = 3) %>%
+                  fmt_number(columns = c(Estimate, SE, t, LCL, UCL), decimals = input$sigfigs + 1) %>%
                   tab_header(title = "ITS Model Results")
             }, error = function(e) {
                 tibble(Error = paste("Table generation failed:", e$message)) %>% gt()
             })
             
-            # Predictions
+            # Predictions (wrapped in tryCatch to prevent isolated prediction failures from crashing)
             preds_se <- tryCatch({
                 AICcmodavg::predictSE.gls(best_model, newdata = df_for_its, se.fit = TRUE)
             }, error = function(e) {
-                list(fit = predict(best_model, newdata = df_for_its), se.fit = rep(0, nrow(df_for_its)))
+                fallback_fit <- tryCatch(as.numeric(predict(best_model, newdata = df_for_its)), error = function(err) rep(NA, nrow(df_for_its)))
+                list(fit = fallback_fit, se.fit = rep(0, nrow(df_for_its)))
             })
             
             df_for_its$pred <- preds_se$fit
@@ -601,7 +809,7 @@ observeEvent(input$run_analysis, {
             # Counterfactual
             df_counterfactual <- df_for_its
             for(var in c(level_vars, trend_vars)) if(var %in% names(df_counterfactual)) df_counterfactual[[var]] <- 0
-            df_for_its$counterfactual <- predict(best_model, newdata = df_counterfactual)
+            df_for_its$counterfactual <- tryCatch(as.numeric(predict(best_model, newdata = df_counterfactual)), error = function(e) rep(NA, nrow(df_counterfactual)))
 
             # Clean Washout Data
             df_for_its$pred[df_for_its$excluded] <- NA
@@ -634,10 +842,15 @@ observeEvent(input$run_analysis, {
                                linetype = "dotted", color = "darkgreen", linewidth = 0.5)
             }
                 
-            its_plot_obj <- its_plot_obj + 
-                geom_vline(xintercept = as.numeric(df_for_its$x[intervention_points]), 
-                           linetype = "dotted", color = "darkblue") +
+            # ITS Interventions Bound Protection
+            valid_ints_its <- intervention_points[intervention_points <= nrow(df_for_its)]
+            if (length(valid_ints_its) > 0) {
+                its_plot_obj <- its_plot_obj + 
+                    geom_vline(xintercept = as.numeric(df_for_its$x[valid_ints_its]), 
+                               linetype = "dotted", color = "darkblue")
+            }
                 
+            its_plot_obj <- its_plot_obj + 
                 geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, group = segment_id), 
                             alpha = 0.2, fill = "#8C8C8C") +
                 
@@ -659,7 +872,7 @@ observeEvent(input$run_analysis, {
                 geom_line(aes(y = upper_ci, text = ucl_hover, group = segment_id), alpha = 0) +
                 geom_line(aes(y = lower_ci, text = lcl_hover, group = segment_id), alpha = 0) +
                 
-                labs(title = paste("ITS Analysis for", input$y_var), subtitle = model_name, x = input$xlab_text, y = input$ylab_text) +
+                labs(title = input$title_text, subtitle = model_name, x = input$xlab_text, y = input$ylab_text) +
                 theme_bw() +
                 theme(legend.position = "none")
             
@@ -702,6 +915,50 @@ output$data_table <- DT::renderDataTable({
     DT::datatable(prepared_data(), filter = "top", options = list(pageLength = 10, scrollX = TRUE))
 })
 
+### Render bindings for the conditionally rendered aggregated table UI
+output$aggregated_data_ui <- renderUI({
+    req(aggregated_data_preview())
+    tagList(
+        hr(),
+        h4("Aggregated Data Preview"),
+        p(HTML("<small>Since you are aggregating the X-axis, the row numbers have changed. If relevant, use the 'Row' numbers in this table to input your Intervention row(s) in the sidebar.</small>")),
+        DT::dataTableOutput("agg_data_table")
+    )
+})
+
+output$agg_data_table <- DT::renderDataTable({
+    req(aggregated_data_preview())
+    DT::datatable(aggregated_data_preview(), 
+                  options = list(pageLength = 10, scrollX = TRUE), 
+                  rownames = FALSE)
+})
+
+
+### NEW: Render logical bindings for the added Diagnostic/Summary outputs
+output$lag1_plot <- renderPlot({ req(rv$lag1_plot); rv$lag1_plot })
+
+output$hist_plot <- renderPlot({ req(rv$hist_plot); rv$hist_plot })
+
+output$acf_pacf_plot <- renderPlot({ req(rv$acf_pacf_plot); rv$acf_pacf_plot })
+
+output$arima_results <- renderUI({ req(rv$arima_results); rv$arima_results })
+
+output$its_methods_text <- renderUI({
+    req(rv$arima_p, rv$arima_q)
+    
+    # Conditional formatting string for the methods to capture (0,0) ARIMA white noise parameters
+    arma_text <- if (rv$arima_p == 0 && rv$arima_q == 0) {
+        "an assumption of independent errors (no ARMA structure required)"
+    } else {
+        sprintf("an ARMA error matrix containing an AR order of %d and an MA order of %d to account for temporal autocorrelation", rv$arima_p, rv$arima_q)
+    }
+    
+    HTML(sprintf(
+        "<p><strong>Methods Summary:</strong> This is an interrupted time series analysis using generalized least squares (GLS) regression, with %s. An information-theoretic model comparison approach using ΔAIC evaluated both level and trend changes relative to baseline following the intervention point(s).</p>", 
+        arma_text
+    ))
+})
+
 #-- 6. Reset Logic --#
 observeEvent(input$reset_app, {
     shinyjs::reset("form")
@@ -712,6 +969,13 @@ observeEvent(input$reset_app, {
     rv$its_plot_ly <- NULL
     rv$its_data <- NULL
     rv$its_model_summary <- NULL
+    
+    ### NEW: Reset new diagnostic plots
+    rv$lag1_plot <- NULL
+    rv$hist_plot <- NULL
+    rv$acf_pacf_plot <- NULL
+    rv$arima_results <- NULL
+    
     showNotification("App reset.", type = "message")
 })
 
