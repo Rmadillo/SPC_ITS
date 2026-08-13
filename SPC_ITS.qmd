@@ -373,7 +373,7 @@ observeEvent(input$file_upload, {
         return(NULL)
     }
     
-    rv$data <- df
+    rv$data <- df #%>% mutate(Row_Number = row_number()) %>% relocate(last_col())
     # Reset results on new upload
     rv$spc_plot <- NULL
     rv$spc_plot_ly <- NULL
@@ -423,7 +423,26 @@ prepared_data <- reactive({
     df <- rv$data
     
     df[[input$y_var]] <- as.numeric(df[[input$y_var]])
-    df[[input$date_var]] <- as.Date(df[[input$date_var]])
+    
+# 1. Are there ANY date/datetime objects in the raw dataset?
+    has_dates_in_df <- any(sapply(df, function(x) inherits(x, c("Date", "POSIXt", "POSIXct"))))
+    
+    # 2. Does the chosen variable have "date" in its name? (catches CSVs read as characters)
+    is_named_date <- grepl("date", input$date_var, ignore.case = TRUE)
+    
+    # If either is true, OR the column itself is already a date, we attempt to parse it.
+    if (has_dates_in_df || is_named_date || inherits(df[[input$date_var]], c("Date", "POSIXt", "POSIXct"))) {
+        
+        # Using lubridate to catch all common date variations safely, including stupid m/d/y
+        parsed_dates <- suppressWarnings(lubridate::parse_date_time(df[[input$date_var]], orders = c("ymd", "mdy", "dmy", "yq")))
+        temp_date <- suppressWarnings(as.Date(parsed_dates))
+        
+        # Only overwrite the column if the conversion actually worked and didn't 
+        # just turn everything into NAs 
+        if (!all(is.na(temp_date[!is.na(df[[input$date_var]])]))) {
+            df[[input$date_var]] <- temp_date
+        }
+    }
     
     if(any(is.na(df[[input$date_var]]))) {
         showNotification("Warning: Rows with missing dates removed.", type = "warning")
